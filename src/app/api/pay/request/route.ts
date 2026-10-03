@@ -1,7 +1,7 @@
 import { createClient } from "@supabase/supabase-js";
 import { NextResponse, type NextRequest } from "next/server";
 import { premiumPrice, supabaseAnonKey, supabaseUrl } from "@/lib/config";
-import { normalizeKenyanPhone } from "@/lib/format";
+import { kenyanNetwork, normalizeKenyanPhone } from "@/lib/format";
 import {
   initiateStkPush,
   isPaywaveConfigured,
@@ -80,21 +80,61 @@ export async function POST(req: NextRequest) {
     );
   }
 
-  // Phone comes from the user's own profile — never from the browser.
+  // The page prefills the registered number but lets the player change which
+  // line gets the prompt — e.g. paying from someone else's phone.
+  const body = (await req.json().catch(() => ({}))) as { phone?: string };
+  const requested = body.phone?.trim()
+    ? normalizeKenyanPhone(body.phone)
+    : null;
+
+  if (body.phone?.trim() && !requested) {
+    return NextResponse.json(
+      {
+        success: false,
+        code: "invalid_phone",
+        error: "Enter a valid phone number, e.g. 0712 345 678.",
+      },
+      { status: 400 },
+    );
+  }
+  if (requested && !kenyanNetwork(requested)) {
+    return NextResponse.json(
+      {
+        success: false,
+        code: "unsupported_network",
+        error:
+          "Use a Safaricom M-Pesa (07XX / 01XX) or Airtel Money (073X / 078X) number.",
+      },
+      { status: 400 },
+    );
+  }
+
+  // Fall back to the number on the player's own profile.
   const { data: profile } = await sb
     .from("profiles")
     .select("phone")
     .eq("id", user.id)
     .maybeSingle();
 
-  const phone = normalizeKenyanPhone(profile?.phone ?? "");
+  const phone = requested ?? normalizeKenyanPhone(profile?.phone ?? "");
   if (!phone) {
     return NextResponse.json(
       {
         success: false,
         code: "no_phone",
         error:
-          "Add a valid M-Pesa number to your account first (Safaricom 07XX / 01XX or Airtel 073X / 078X).",
+          "Enter the M-Pesa number to charge (Safaricom 07XX / 01XX or Airtel 073X / 078X).",
+      },
+      { status: 400 },
+    );
+  }
+  if (!kenyanNetwork(phone)) {
+    return NextResponse.json(
+      {
+        success: false,
+        code: "unsupported_network",
+        error:
+          "The number on your account can't be charged. Use a Safaricom (07XX / 01XX) or Airtel Money (073X / 078X) number.",
       },
       { status: 400 },
     );

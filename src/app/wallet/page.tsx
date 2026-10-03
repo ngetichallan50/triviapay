@@ -36,9 +36,8 @@ export default function WalletPage() {
     try {
       const result = await requestWithdrawal(value);
       setMessage(result);
-      if (!result.toLowerCase().includes("minimum") && !result.toLowerCase().includes("insufficient")) {
-        setAmount("");
-      }
+      // Only clear the field when the request actually landed.
+      if (result.includes("requested.")) setAmount("");
     } finally {
       setBusy(false);
     }

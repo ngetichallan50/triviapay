@@ -164,23 +164,36 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   const requestWithdrawal = useCallback(
     async (amount: number) => {
       if (!profile) return "Sign in to withdraw.";
-      const minimum = minWithdrawalFor(profile.premium);
+      // Premium unlocks a KSh 100 minimum; free accounts stay at KSh 5,000.
+      const minimum = minWithdrawalFor(profile.premium === true);
       if (amount < minimum) {
         return `Minimum withdrawal is KSh ${minimum.toLocaleString("en-KE")}.`;
       }
       if (amount > profile.balance) return "Insufficient balance.";
 
-      await supabase.from("transactions").insert({
-        user_id: profile.id,
-        type: "withdrawal",
-        amount,
-        status: "pending",
-      });
+      // Record the request first — payouts are approved and sent by hand, so the
+      // row is the only thing that survives. Never report success if it failed.
+      const { error: insertError } = await supabase
+        .from("transactions")
+        .insert({
+          user_id: profile.id,
+          type: "withdrawal",
+          amount,
+          status: "pending",
+        });
+      if (insertError) {
+        return `Could not save your request: ${insertError.message}`;
+      }
+
       const next = profile.balance - amount;
-      await supabase
+      const { error: balanceError } = await supabase
         .from("profiles")
         .update({ balance: next })
         .eq("id", profile.id);
+      if (balanceError) {
+        return `Your request was saved, but the balance could not be updated (${balanceError.message}). Please contact support before requesting again.`;
+      }
+
       setProfile({ ...profile, balance: next });
       return `Withdrawal of KSh ${amount.toLocaleString("en-KE")} requested. It will be sent to M-Pesa after manual approval.`;
     },
