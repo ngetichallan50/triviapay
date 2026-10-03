@@ -89,8 +89,9 @@ Ad revenue funds the player payouts, so slots are spread across the app:
 
 | Placement | Unit |
 |---|---|
-| Every page (site-wide) | Popunder, Social Bar |
+| Every page (site-wide) | Social Bar (Popunder is disabled) |
 | Home | 300×250 + Native Banner + (728×90 desktop / 320×50 mobile) |
+| Quiz (question screen) | 320×50 top + 300×250 bottom |
 | Quiz (round-break screen) | 300×250 |
 | Results | 300×250 + Native Banner + (728×90 / 320×50) |
 | Wallet, Account | 300×250 |
@@ -98,7 +99,7 @@ Ad revenue funds the player payouts, so slots are spread across the app:
 - Config lives in **`src/lib/ads.ts`** (website `triviapay.online`, ID `6095746`).
   Units: Popunder `31543518`, Native Banner `31543519`, Social Bar `31543520`,
   Banner 300×250 `31543521`, 320×50 `31543522`, 728×90 `31543523`.
-- `AdScripts` injects the site-wide Popunder + Social Bar scripts once.
+- `AdScripts` injects the site-wide Social Bar script once (Popunder disabled).
 - `AdBanner` renders each banner in an **isolated `<iframe srcdoc>`** so per-unit
   `atOptions` blocks can't collide; `AdNative` mounts the Native Banner snippet.
 - **Premium stays ad-free**, and **login / register / premium pages show no ads**

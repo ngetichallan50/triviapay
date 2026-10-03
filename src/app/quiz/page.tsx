@@ -213,13 +213,8 @@ export default function QuizPage() {
     setRoundEarnings(earned);
   }, [inReview, isLoggedIn, profile, addEarnings, round, categoryIds]);
 
-  const finish = useCallback(() => {
-    const misses = Array.from(passMissRef.current.values());
-    if (misses.length > 0) {
-      setMissed(misses);
-      setPhase("reviewPrompt");
-      return;
-    }
+  /** Writes the summary and moves to the results screen. */
+  const goToResults = useCallback(() => {
     const summary: QuizSummary = {
       score: scoreRef.current,
       total,
@@ -231,6 +226,22 @@ export default function QuizPage() {
     sessionStorage.setItem("tpweb_summary", JSON.stringify(summary));
     router.push("/results");
   }, [total, balance, categoryIds, isLoggedIn, router]);
+
+  /**
+   * End of a pass: collect this pass's misses (and clear the map so the next
+   * pass starts clean), then either offer a review or finish. "Skip" calls
+   * [goToResults] directly, so it always leaves the prompt.
+   */
+  const finish = useCallback(() => {
+    const misses = Array.from(passMissRef.current.values());
+    passMissRef.current.clear();
+    if (misses.length > 0) {
+      setMissed(misses);
+      setPhase("reviewPrompt");
+      return;
+    }
+    goToResults();
+  }, [goToResults]);
 
   const next = useCallback(async () => {
     if (!round) return;
@@ -413,7 +424,7 @@ export default function QuizPage() {
             <GradientButton onClick={startReview}>Review now</GradientButton>
             <button
               type="button"
-              onClick={finish}
+              onClick={goToResults}
               className="w-full rounded-2xl px-4 py-2 text-sm font-semibold text-slate-500"
             >
               Skip
@@ -490,6 +501,8 @@ export default function QuizPage() {
           />
         </div>
 
+        <AdBanner unit="mobile" className="mt-3" />
+
         <div className="mt-4 flex-1 overflow-y-auto">
           <QuestionCard
             question={item.question.text}
@@ -512,6 +525,8 @@ export default function QuizPage() {
               />
             ))}
           </div>
+
+          <AdBanner unit="medium" className="mt-4" />
         </div>
 
         {answered && (

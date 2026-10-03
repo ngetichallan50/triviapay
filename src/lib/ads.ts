@@ -45,9 +45,8 @@ export const adsterra: AdsterraConfig = {
 
   invokeHost: "https://www.highrevenueformat.com",
 
-  // Site-wide scripts (Adsterra: popunder → before </head>, social bar → </body>).
-  popunderSrc:
-    "https://pl31644017.profitableratecpmnetwork.com/33/14/40/33144077fc96242891a29f2a26edfd7c.js",
+  // Site-wide scripts. Popunder is intentionally OFF (no pop-up ads).
+  popunderSrc: "",
   socialBarSrc:
     "https://pl31644019.profitableratecpmnetwork.com/c0/23/53/c0235378d276f175c787c930dbc3549c.js",
 
