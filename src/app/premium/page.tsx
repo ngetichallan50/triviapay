@@ -10,6 +10,11 @@ import {
   referralBonus,
   referralBonusPremium,
 } from "@/lib/config";
+import {
+  formatPhonePretty,
+  kenyanNetwork,
+  normalizeKenyanPhone,
+} from "@/lib/format";
 import { useAuth } from "@/providers/AuthProvider";
 
 const GRADIENT = "linear-gradient(135deg,#6D28D9 0%,#9333EA 100%)";
@@ -44,13 +49,46 @@ export default function PremiumPage() {
     session,
     activatePremium,
     refreshProfile,
+    updatePhone,
   } = useAuth();
   const [phase, setPhase] = useState<PayPhase>("idle");
   const [message, setMessage] = useState<string | null>(null);
   const [pendingTxn, setPendingTxn] = useState<string | null>(null);
+  const [phoneInput, setPhoneInput] = useState("");
+  const [savingPhone, setSavingPhone] = useState(false);
 
   const busy = phase === "sending" || phase === "waiting";
   const phone = profile?.phone ?? null;
+
+  /** Saves the M-Pesa number the player typed on this page. */
+  async function savePhone() {
+    const normalized = normalizeKenyanPhone(phoneInput);
+    if (!normalized) {
+      setPhase("failed");
+      setMessage("Enter a valid phone number, e.g. 0712 345 678.");
+      return;
+    }
+    if (!kenyanNetwork(normalized)) {
+      setPhase("failed");
+      setMessage(
+        "Use a Safaricom M-Pesa (07XX / 01XX) or Airtel Money (073X / 078X) number.",
+      );
+      return;
+    }
+    setSavingPhone(true);
+    try {
+      await updatePhone(normalized);
+      setPhase("idle");
+      setMessage(null);
+    } catch (error) {
+      setPhase("failed");
+      setMessage(
+        error instanceof Error ? error.message : "Could not save your number.",
+      );
+    } finally {
+      setSavingPhone(false);
+    }
+  }
 
   /** Activates Premium once M-Pesa confirms the money moved. */
   async function activateConfirmed(receipt?: string) {
@@ -111,7 +149,7 @@ export default function PremiumPage() {
     }
     if (!phone) {
       setPhase("failed");
-      setMessage("Add your M-Pesa number in Account first.");
+      setMessage("Add your M-Pesa number below, then tap Pay.");
       return;
     }
     const token = session.access_token;
@@ -198,23 +236,39 @@ export default function PremiumPage() {
               </GradientButton>
             </>
           ) : !phone ? (
-            <div className="rounded-2xl bg-amber-50 p-4 text-sm font-semibold text-amber-800">
-              Add your M-Pesa number in{" "}
-              <button
-                type="button"
-                className="underline"
-                onClick={() => router.push("/account")}
-              >
-                Account
-              </button>{" "}
-              before paying.
+            <div className="space-y-3 rounded-2xl bg-amber-50 p-4">
+              <p className="text-sm font-semibold text-amber-800">
+                We need the M-Pesa number to charge. Add it here (once) and
+                we&apos;ll save it to your account.
+              </p>
+              <input
+                value={phoneInput}
+                onChange={(e) => setPhoneInput(e.target.value)}
+                type="tel"
+                inputMode="tel"
+                autoComplete="tel"
+                placeholder="Number receiving the M-Pesa prompt, e.g. 0712 345 678"
+                className="w-full rounded-2xl border border-amber-300 bg-white px-4 py-3 text-sm outline-none focus:border-amber-500"
+              />
+              <p className="text-xs text-amber-800">
+                Safaricom M-Pesa (07XX / 01XX) or Airtel Money (073X / 078X) only.
+              </p>
+              {kenyanNetwork(normalizeKenyanPhone(phoneInput) ?? "") && (
+                <p className="text-xs font-semibold text-emerald-700">
+                  ✓ {kenyanNetwork(normalizeKenyanPhone(phoneInput) ?? "")} number
+                </p>
+              )}
+              <GradientButton onClick={savePhone} busy={savingPhone}>
+                Save my M-Pesa number
+              </GradientButton>
             </div>
           ) : (
             <>
               <div className="rounded-2xl bg-slate-50 p-3 text-sm text-slate-600">
                 We&apos;ll send an M-Pesa prompt for{" "}
-                <strong>KSh {premiumPrice}</strong> to <strong>{phone}</strong>.
-                Enter your PIN on your phone to confirm.
+                <strong>KSh {premiumPrice}</strong> to{" "}
+                <strong>{formatPhonePretty(phone)}</strong>. Enter your PIN on
+                your phone to confirm.
               </div>
               <GradientButton
                 onClick={pendingTxn && phase !== "success" ? checkAgain : pay}

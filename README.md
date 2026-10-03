@@ -53,11 +53,18 @@ Supabase SQL Editor if you haven't:
 
 ## Auth notes
 
-- Sign-up uses **email + password**. If your Supabase project has **email
-  confirmation** turned on, the user must confirm before signing in — the app
-  shows a message telling them so. Turn it **off** (Authentication → Providers →
-  Email) for instant sign-in, or enable **Phone** auth (needs an SMS provider
-  like Twilio) if you want the mobile app's phone-first flow.
+- Sign-up asks for **name + M-Pesa phone number + a 4-digit PIN** — no email,
+  no username. The phone number *is* the username.
+- Only **Safaricom M-Pesa** (07XX / 01XX) and **Airtel Money** (073X / 078X)
+  numbers are accepted, since those are the lines an STK push can reach.
+  Telkom / Equitel lines are rejected at sign-up.
+- Under the hood Supabase still authenticates by email: the app derives a
+  private, deterministic address (`<2547XXXXXXXX>@players.triviapay.online`) and
+  pads the PIN into a password. The player never sees either.
+- Because that address is synthetic, **email confirmation MUST be OFF**
+  (Supabase → Authentication → Providers → Email → *Confirm email*). If it is
+  left on, sign-up returns no session and the app tells the user to ask the
+  owner to turn it off.
 - Guest play works without an account (no earning).
 
 ## Project structure

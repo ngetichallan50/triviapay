@@ -11,15 +11,15 @@ import {
 } from "react";
 import type { Session } from "@supabase/supabase-js";
 import { dailyQuestionLimit, minWithdrawalFor, signupBonus } from "@/lib/config";
+import { authPasswordFor, phoneDigits, phoneToAuthEmail } from "@/lib/format";
 import { supabase } from "@/lib/supabase";
 import type { Profile } from "@/lib/types";
 
+/** Sign-up only needs a name, a phone number and a 4-digit PIN. */
 export type RegisterInput = {
-  email: string;
-  password: string;
   name: string;
-  username: string;
   phone: string;
+  pin: string;
 };
 
 type AuthContextValue = {
@@ -34,13 +34,14 @@ type AuthContextValue = {
   dailyLimit: number | null;
   withdrawalMinimum: number;
   register: (input: RegisterInput) => Promise<{ needsConfirmation: boolean }>;
-  login: (email: string, password: string) => Promise<void>;
+  login: (phone: string, pin: string) => Promise<void>;
   logout: () => Promise<void>;
   refreshProfile: () => Promise<void>;
   addEarnings: (amount: number) => Promise<number>;
   requestWithdrawal: (amount: number) => Promise<string>;
   activatePremium: () => Promise<void>;
   updateName: (name: string) => Promise<void>;
+  updatePhone: (phone: string) => Promise<void>;
 };
 
 const AuthContext = createContext<AuthContextValue | null>(null);
@@ -90,29 +91,32 @@ export function AuthProvider({ children }: { children: ReactNode }) {
 
   const register = useCallback(
     async (input: RegisterInput) => {
+      const username = phoneDigits(input.phone);
       const { data, error } = await supabase.auth.signUp({
-        email: input.email,
-        password: input.password,
+        // The player only knows their phone + PIN; auth runs on a derived email.
+        email: phoneToAuthEmail(input.phone),
+        password: authPasswordFor(input.phone, input.pin),
         options: {
           data: {
             name: input.name,
-            username: input.username,
+            username,
             phone: input.phone,
           },
         },
       });
       if (error) throw new Error(error.message);
 
-      // If email confirmation is on, there is no session yet.
+      // Only reached if email confirmation is enabled in Supabase — which must
+      // stay OFF, since the address is synthetic and can't receive mail.
       if (!data.session || !data.user) return { needsConfirmation: true };
 
-      // Make sure the profile carries the username/phone and welcome bonus,
+      // Make sure the profile carries the phone/username and welcome bonus,
       // even if the database trigger hasn't been updated yet.
       await supabase.from("profiles").upsert(
         {
           id: data.user.id,
           name: input.name,
-          username: input.username,
+          username,
           phone: input.phone,
           balance: signupBonus,
         },
@@ -124,16 +128,19 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     [loadProfile],
   );
 
-  const login = useCallback(
-    async (email: string, password: string) => {
-      const { error } = await supabase.auth.signInWithPassword({
-        email,
-        password,
-      });
-      if (error) throw new Error(error.message);
-    },
-    [],
-  );
+  const login = useCallback(async (phone: string, pin: string) => {
+    const { error } = await supabase.auth.signInWithPassword({
+      email: phoneToAuthEmail(phone),
+      password: authPasswordFor(phone, pin),
+    });
+    if (error) {
+      throw new Error(
+        /invalid login credentials/i.test(error.message)
+          ? "Wrong phone number or PIN. Please try again."
+          : error.message,
+      );
+    }
+  }, []);
 
   const logout = useCallback(async () => {
     await supabase.auth.signOut();
@@ -214,6 +221,21 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     [profile],
   );
 
+  /** Used by Account / Premium to attach or correct the M-Pesa number. */
+  const updatePhone = useCallback(
+    async (phone: string) => {
+      if (!profile) return;
+      const username = phoneDigits(phone);
+      const { error } = await supabase
+        .from("profiles")
+        .update({ phone, username })
+        .eq("id", profile.id);
+      if (error) throw new Error(error.message);
+      setProfile({ ...profile, phone, username });
+    },
+    [profile],
+  );
+
   const value = useMemo<AuthContextValue>(() => {
     const isPremium = profile?.premium ?? false;
     return {
@@ -223,7 +245,8 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       isLoggedIn: session != null,
       isPremium,
       balance: profile?.balance ?? 0,
-      username: profile?.username ?? null,
+      // Username *is* the phone number — there is no separate handle.
+      username: profile?.phone ?? profile?.username ?? null,
       dailyLimit: isPremium ? null : dailyQuestionLimit,
       withdrawalMinimum: minWithdrawalFor(isPremium),
       register,
@@ -234,6 +257,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       requestWithdrawal,
       activatePremium,
       updateName,
+      updatePhone,
     };
   }, [
     session,
@@ -247,6 +271,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     requestWithdrawal,
     activatePremium,
     updateName,
+    updatePhone,
   ]);
 
   return <AuthContext.Provider value={value}>{children}</AuthContext.Provider>;

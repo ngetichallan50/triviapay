@@ -6,8 +6,8 @@ import { useRouter } from "next/navigation";
 import { GradientButton } from "@/components/GradientButton";
 import { premiumMinWithdrawal, premiumPrice, signupBonus } from "@/lib/config";
 import {
-  isValidPassword,
-  isValidUsername,
+  isValidPin,
+  kenyanNetwork,
   normalizeKenyanPhone,
 } from "@/lib/format";
 import { markOnboarded } from "@/lib/onboarding";
@@ -22,10 +22,8 @@ export default function RegisterPage() {
   const [plan, setPlan] = useState<Plan>("free");
   const [form, setForm] = useState({
     name: "",
-    username: "",
-    email: "",
     phone: "",
-    password: "",
+    pin: "",
     confirm: "",
   });
   const [error, setError] = useState<string | null>(null);
@@ -34,6 +32,12 @@ export default function RegisterPage() {
 
   const set = (key: keyof typeof form) => (e: React.ChangeEvent<HTMLInputElement>) =>
     setForm((prev) => ({ ...prev, [key]: e.target.value }));
+
+  // Digits only for the PIN fields, so stray characters can't sneak in.
+  const setPin = (key: "pin" | "confirm") => (e: React.ChangeEvent<HTMLInputElement>) =>
+    setForm((prev) => ({ ...prev, [key]: e.target.value.replace(/\D/g, "").slice(0, 4) }));
+
+  const network = kenyanNetwork(normalizeKenyanPhone(form.phone) ?? "");
 
   function continueAsGuest() {
     markOnboarded();
@@ -46,35 +50,34 @@ export default function RegisterPage() {
     setNotice(null);
 
     if (form.name.trim().length < 2) return setError("Enter your name.");
-    if (!isValidUsername(form.username.trim())) {
+    const phone = normalizeKenyanPhone(form.phone);
+    if (!phone) {
+      return setError("Enter a valid phone number, e.g. 0712 345 678.");
+    }
+    if (!kenyanNetwork(phone)) {
       return setError(
-        "Username: 3-15 chars, start with a letter (letters, numbers, _).",
+        "That line can't be charged by M-Pesa. Enter a Safaricom (07XX / 01XX) or Airtel Money (073X / 078X) number.",
       );
     }
-    if (!form.email.includes("@")) return setError("Enter a valid email.");
-    const phone = normalizeKenyanPhone(form.phone);
-    if (!phone) return setError("Enter a valid phone number, e.g. 0712345678");
-    if (!isValidPassword(form.password)) {
-      return setError("Password must be at least 6 characters.");
+    if (!isValidPin(form.pin)) {
+      return setError("Your PIN must be exactly 4 digits.");
     }
-    if (form.password !== form.confirm) {
-      return setError("Passwords do not match.");
+    if (form.pin !== form.confirm) {
+      return setError("PINs do not match.");
     }
 
     setBusy(true);
     try {
       const { needsConfirmation } = await register({
-        email: form.email.trim(),
-        password: form.password,
         name: form.name.trim(),
-        username: form.username.trim(),
         phone,
+        pin: form.pin,
       });
       markOnboarded();
       if (needsConfirmation) {
         setNotice(
-          "Account created! Check your email to confirm it, then sign in. " +
-            "Tip: the project owner can turn email confirmation off in Supabase.",
+          "Account created, but Supabase is asking for email confirmation. " +
+            "The project owner must turn OFF \"Confirm email\" in Supabase → Authentication → Providers → Email, then you can sign in.",
         );
       } else {
         // Premium players go straight to payment; free players to the home grid.
@@ -193,42 +196,53 @@ export default function RegisterPage() {
           placeholder="Full name"
           className="w-full rounded-2xl border border-slate-300 px-4 py-3 outline-none focus:border-brand"
         />
-        <input
-          value={form.username}
-          onChange={set("username")}
-          placeholder="Username (for referrals)"
-          className="w-full rounded-2xl border border-slate-300 px-4 py-3 outline-none focus:border-brand"
-        />
-        <input
-          value={form.email}
-          onChange={set("email")}
-          type="email"
-          placeholder="Email address"
-          autoComplete="email"
-          className="w-full rounded-2xl border border-slate-300 px-4 py-3 outline-none focus:border-brand"
-        />
-        <input
-          value={form.phone}
-          onChange={set("phone")}
-          inputMode="tel"
-          placeholder="Phone number (M-Pesa / Airtel Money)"
-          className="w-full rounded-2xl border border-slate-300 px-4 py-3 outline-none focus:border-brand"
-        />
-        <input
-          value={form.password}
-          onChange={set("password")}
-          type="password"
-          placeholder="Password"
-          autoComplete="new-password"
-          className="w-full rounded-2xl border border-slate-300 px-4 py-3 outline-none focus:border-brand"
-        />
+        <div>
+          <input
+            value={form.phone}
+            onChange={set("phone")}
+            inputMode="tel"
+            autoComplete="tel"
+            placeholder="M-Pesa phone number, e.g. 0712 345 678"
+            className="w-full rounded-2xl border border-slate-300 px-4 py-3 outline-none focus:border-brand"
+          />
+          <p className="mt-1.5 px-1 text-xs text-slate-500">
+            {network ? (
+              <span className="font-semibold text-brand">
+                ✓ {network} number — we&apos;ll pay you here
+              </span>
+            ) : (
+              <>
+                <strong>Safaricom M-Pesa</strong> (07XX / 01XX) or{" "}
+                <strong>Airtel Money</strong> (073X / 078X) numbers only. This
+                is your username too — you&apos;ll sign in with it.
+              </>
+            )}
+          </p>
+        </div>
+        <div>
+          <input
+            value={form.pin}
+            onChange={setPin("pin")}
+            type="password"
+            inputMode="numeric"
+            maxLength={4}
+            placeholder="Choose a 4-digit PIN"
+            autoComplete="new-password"
+            className="w-full rounded-2xl border border-slate-300 px-4 py-3 tracking-[0.5em] outline-none focus:border-brand"
+          />
+          <p className="mt-1.5 px-1 text-xs text-slate-500">
+            Your PIN is your password — you&apos;ll use it to sign in.
+          </p>
+        </div>
         <input
           value={form.confirm}
-          onChange={set("confirm")}
+          onChange={setPin("confirm")}
           type="password"
-          placeholder="Confirm password"
+          inputMode="numeric"
+          maxLength={4}
+          placeholder="Confirm your PIN"
           autoComplete="new-password"
-          className="w-full rounded-2xl border border-slate-300 px-4 py-3 outline-none focus:border-brand"
+          className="w-full rounded-2xl border border-slate-300 px-4 py-3 tracking-[0.5em] outline-none focus:border-brand"
         />
 
         <div className="rounded-2xl border border-amber-300 bg-amber-50 p-3 text-sm font-semibold text-amber-800">

@@ -4,32 +4,33 @@ import { useState } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { GradientButton } from "@/components/GradientButton";
-import { isValidPassword } from "@/lib/format";
+import { isValidPin, normalizeKenyanPhone } from "@/lib/format";
 import { markOnboarded } from "@/lib/onboarding";
 import { useAuth } from "@/providers/AuthProvider";
 
 export default function LoginPage() {
   const router = useRouter();
   const { login } = useAuth();
-  const [email, setEmail] = useState("");
-  const [password, setPassword] = useState("");
+  const [phone, setPhone] = useState("");
+  const [pin, setPin] = useState("");
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
 
   async function submit(e: React.FormEvent) {
     e.preventDefault();
     setError(null);
-    if (!email.includes("@")) {
-      setError("Enter a valid email address.");
+    const normalized = normalizeKenyanPhone(phone);
+    if (!normalized) {
+      setError("Enter the phone number you registered with, e.g. 0712 345 678.");
       return;
     }
-    if (!isValidPassword(password)) {
-      setError("Password must be at least 6 characters.");
+    if (!isValidPin(pin)) {
+      setError("Your PIN is 4 digits.");
       return;
     }
     setBusy(true);
     try {
-      await login(email.trim(), password);
+      await login(normalized, pin);
       markOnboarded();
       router.push("/");
     } catch (err) {
@@ -45,7 +46,7 @@ export default function LoginPage() {
         <div className="text-5xl">💰</div>
         <h1 className="mt-3 text-2xl font-extrabold">Welcome back!</h1>
         <p className="mt-1 text-sm text-white/90">
-          Sign in to keep earning on M-Pesa
+          Sign in with your phone number and PIN
         </p>
       </div>
 
@@ -54,20 +55,25 @@ export default function LoginPage() {
         className="mx-auto -mt-10 max-w-md space-y-4 rounded-3xl bg-white p-6 card-shadow"
       >
         <input
-          type="email"
-          value={email}
-          onChange={(e) => setEmail(e.target.value)}
-          placeholder="Email address"
-          autoComplete="email"
+          type="tel"
+          value={phone}
+          onChange={(e) => setPhone(e.target.value)}
+          placeholder="Phone number, e.g. 0712 345 678"
+          inputMode="tel"
+          autoComplete="tel"
           className="w-full rounded-2xl border border-slate-300 px-4 py-3 outline-none focus:border-brand"
         />
         <input
           type="password"
-          value={password}
-          onChange={(e) => setPassword(e.target.value)}
-          placeholder="Password"
+          value={pin}
+          onChange={(e) =>
+            setPin(e.target.value.replace(/\D/g, "").slice(0, 4))
+          }
+          placeholder="4-digit PIN"
+          inputMode="numeric"
+          maxLength={4}
           autoComplete="current-password"
-          className="w-full rounded-2xl border border-slate-300 px-4 py-3 outline-none focus:border-brand"
+          className="w-full rounded-2xl border border-slate-300 px-4 py-3 tracking-[0.5em] outline-none focus:border-brand"
         />
         {error && (
           <p className="rounded-xl bg-red-50 p-3 text-sm text-red-700">

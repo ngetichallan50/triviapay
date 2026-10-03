@@ -61,6 +61,6 @@ export const calculateEarnings = (correctAnswers: number): number =>
 export const minWithdrawalFor = (premium: boolean): number =>
   premium ? premiumMinWithdrawal : minWithdrawal;
 
-/** Referral reward that applies to the person who shared their username. */
+/** Referral reward that applies to the person who shared their phone number. */
 export const referralBonusFor = (premium: boolean): number =>
   premium ? referralBonusPremium : referralBonus;
