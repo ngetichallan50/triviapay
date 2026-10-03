@@ -3,6 +3,8 @@
 import { useEffect, useState } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
+import { AdBanner } from "@/components/AdBanner";
+import { AdNative } from "@/components/AdNative";
 import { AppHeader } from "@/components/AppHeader";
 import { GradientButton } from "@/components/GradientButton";
 import { kshPerCorrect } from "@/lib/config";
@@ -84,6 +86,8 @@ export default function ResultsPage() {
           )}
         </div>
 
+        <AdBanner unit="medium" className="mt-5" />
+
         <div className="mt-5 space-y-2">
           <GradientButton onClick={() => router.push("/")}>
             Play again
@@ -98,6 +102,10 @@ export default function ResultsPage() {
             </button>
           )}
         </div>
+
+        <AdNative className="mt-5" />
+        <AdBanner unit="leaderboard" className="mt-6 hidden sm:block" />
+        <AdBanner unit="mobile" className="mt-6 sm:hidden" />
       </main>
     </div>
   );

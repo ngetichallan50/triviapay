@@ -2,6 +2,7 @@
 
 import { useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
+import { AdBanner } from "@/components/AdBanner";
 import { AppHeader } from "@/components/AppHeader";
 import { GradientButton } from "@/components/GradientButton";
 import { formatKsh } from "@/lib/format";
@@ -85,6 +86,8 @@ export default function AccountPage() {
             </div>
           </div>
         </div>
+
+        <AdBanner unit="medium" className="mt-5" />
 
         <div className="mt-6 rounded-3xl bg-white p-5 card-shadow">
           <h2 className="font-extrabold text-slate-900">Edit name</h2>

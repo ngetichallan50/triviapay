@@ -2,6 +2,7 @@
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
+import { AdBanner } from "@/components/AdBanner";
 import { AnswerTile, type AnswerState } from "@/components/AnswerTile";
 import { GradientButton } from "@/components/GradientButton";
 import { QuestionCard } from "@/components/QuestionCard";
@@ -385,6 +386,7 @@ export default function QuizPage() {
               </span>
             )}
           </div>
+          <AdBanner unit="medium" className="mt-5" />
           <div className="mt-6">
             <GradientButton onClick={continueRound}>Next round</GradientButton>
           </div>

@@ -2,6 +2,8 @@
 
 import { useMemo, useState } from "react";
 import { useRouter } from "next/navigation";
+import { AdBanner } from "@/components/AdBanner";
+import { AdNative } from "@/components/AdNative";
 import { AppHeader } from "@/components/AppHeader";
 import { CategoryCard } from "@/components/CategoryCard";
 import { EarnPromptModal } from "@/components/EarnPromptModal";
@@ -11,7 +13,7 @@ import { useMaterial } from "@/providers/MaterialProvider";
 
 export default function HomePage() {
   const router = useRouter();
-  const { isLoggedIn, isPremium, profile } = useAuth();
+  const { isLoggedIn, profile } = useAuth();
   const { categories, progressFor, isReady, readyCount, isLoading, retry } =
     useMaterial();
 
@@ -106,23 +108,7 @@ export default function HomePage() {
           </div>
         </section>
 
-        {isLoggedIn && !isPremium && (
-          <div className="mt-4 flex items-center gap-3 rounded-2xl border border-slate-200 bg-slate-100 px-3.5 py-3">
-            <span className="rounded-md bg-slate-400 px-2 py-0.5 text-[10px] font-extrabold text-white">
-              AD
-            </span>
-            <p className="flex-1 text-xs text-slate-600">
-              Your ad could be here — sponsor TriviaPay and reach thousands of
-              Kenyan players.
-            </p>
-            <a
-              href="/premium"
-              className="rounded-lg px-2.5 py-1 text-xs font-bold text-brand"
-            >
-              Remove
-            </a>
-          </div>
-        )}
+        <AdBanner unit="medium" className="mt-4" />
 
         <section className="mt-4 grid grid-cols-2 gap-3.5 sm:grid-cols-3 lg:grid-cols-4">
           {categories.map((category) => (
@@ -136,6 +122,10 @@ export default function HomePage() {
             />
           ))}
         </section>
+
+        <AdNative className="mt-6" />
+        <AdBanner unit="leaderboard" className="mt-6 hidden sm:block" />
+        <AdBanner unit="mobile" className="mt-6 sm:hidden" />
       </main>
 
       {selectedReady.length > 0 && (
