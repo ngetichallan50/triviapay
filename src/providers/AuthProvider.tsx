@@ -187,7 +187,17 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       .from("profiles")
       .update({ premium: true, premium_since: new Date().toISOString() })
       .eq("id", profile.id);
-    if (error) throw new Error(error.message);
+    if (error) {
+      const missingColumn =
+        /column .*(premium|premium_since).*?does not exist|schema cache/i.test(
+          error.message,
+        );
+      throw new Error(
+        missingColumn
+          ? "Premium needs a one-time database setup: run the premium SQL migration in Supabase (adds profiles.premium and profiles.premium_since)."
+          : error.message,
+      );
+    }
     setProfile({ ...profile, premium: true });
   }, [profile]);
 

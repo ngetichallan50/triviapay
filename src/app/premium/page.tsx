@@ -10,8 +10,6 @@ import {
   referralBonus,
   referralBonusPremium,
 } from "@/lib/config";
-import { normalizeKenyanPhone } from "@/lib/format";
-import { supabase } from "@/lib/supabase";
 import { useAuth } from "@/providers/AuthProvider";
 
 const GRADIENT = "linear-gradient(135deg,#6D28D9 0%,#9333EA 100%)";
@@ -35,38 +33,120 @@ const BENEFITS = [
   },
 ];
 
+type PayPhase = "idle" | "sending" | "waiting" | "success" | "failed";
+
 export default function PremiumPage() {
   const router = useRouter();
-  const { isLoggedIn, isPremium, profile, activatePremium } = useAuth();
-  const [phone, setPhone] = useState(profile?.phone ?? "");
-  const [busy, setBusy] = useState(false);
+  const {
+    isLoggedIn,
+    isPremium,
+    profile,
+    session,
+    activatePremium,
+    refreshProfile,
+  } = useAuth();
+  const [phase, setPhase] = useState<PayPhase>("idle");
   const [message, setMessage] = useState<string | null>(null);
+  const [pendingTxn, setPendingTxn] = useState<string | null>(null);
+
+  const busy = phase === "sending" || phase === "waiting";
+  const phone = profile?.phone ?? null;
+
+  /** Activates Premium once M-Pesa confirms the money moved. */
+  async function activateConfirmed(receipt?: string) {
+    setPhase("success");
+    setMessage(
+      `Payment received${receipt ? ` (receipt ${receipt})` : ""}. Activating Premium…`,
+    );
+    try {
+      await activatePremium();
+      await refreshProfile();
+      setMessage(`Premium activated 👑${receipt ? ` Receipt ${receipt}` : ""}`);
+    } catch (error) {
+      setPhase("failed");
+      setMessage(
+        `Payment succeeded but activating Premium failed: ${
+          error instanceof Error ? error.message : "unknown error"
+        }`,
+      );
+    }
+  }
+
+  /** Polls the gateway until the payment settles or we run out of attempts. */
+  async function poll(token: string, txnId: string, attempts: number) {
+    for (let i = 0; i < attempts; i++) {
+      await new Promise((resolve) => setTimeout(resolve, 3000));
+      const res = await fetch(
+        `/api/pay/status?txn_id=${encodeURIComponent(txnId)}`,
+        { headers: { Authorization: `Bearer ${token}` } },
+      );
+      const data = await res.json().catch(() => ({}));
+      const status = data.status as string | undefined;
+
+      if (status === "Completed") {
+        setPendingTxn(null);
+        await activateConfirmed(data.receipt as string | undefined);
+        return;
+      }
+      if (status === "Failed" || status === "Cancelled") {
+        setPendingTxn(null);
+        setPhase("failed");
+        setMessage(
+          status === "Cancelled"
+            ? "You cancelled the M-Pesa prompt. You have not been charged."
+            : "Payment failed — you have not been charged.",
+        );
+        return;
+      }
+      // Pending / unknown → keep waiting. Never treat it as a failure.
+    }
+    setPhase("idle");
+    setMessage("Still waiting for M-Pesa. Tap “Check status” to keep checking.");
+  }
 
   async function pay() {
-    if (!isLoggedIn) {
+    if (!isLoggedIn || !session) {
       router.push("/login");
       return;
     }
-    const normalized = normalizeKenyanPhone(phone);
-    if (!normalized) {
-      setMessage("Enter a valid M-Pesa / Airtel Money number, e.g. 0712345678");
+    if (!phone) {
+      setPhase("failed");
+      setMessage("Add your M-Pesa number in Account first.");
       return;
     }
-    setBusy(true);
+    const token = session.access_token;
+    setMessage(null);
+    setPhase("sending");
     try {
-      // Skeleton: no Daraja callback yet, so we activate straight away and
-      // record the intent on the profile.
+      const res = await fetch("/api/pay/request", {
+        method: "POST",
+        headers: { Authorization: `Bearer ${token}` },
+      });
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok || !data.success) {
+        setPhase("failed");
+        setMessage(data.error ?? "Could not send the M-Pesa prompt.");
+        return;
+      }
+      const txnId = data.transactionRequestId as string;
+      setPendingTxn(txnId);
+      setPhase("waiting");
       setMessage(
-        `An M-Pesa prompt for KSh ${premiumPrice} was sent to ${normalized}. Enter your PIN to confirm.`,
+        data.message ??
+          "Check your phone for the M-Pesa prompt and enter your PIN.",
       );
-      await activatePremium();
-      await supabase.auth.updateUser({ data: { premium_pending: false } });
-      setMessage("Premium activated. Karibu! 👑");
-    } catch (error) {
-      setMessage(error instanceof Error ? error.message : "Payment failed.");
-    } finally {
-      setBusy(false);
+      await poll(token, txnId, 20);
+    } catch {
+      setPhase("failed");
+      setMessage("Something went wrong. Please try again.");
     }
+  }
+
+  async function checkAgain() {
+    if (!session || !pendingTxn) return;
+    setPhase("waiting");
+    setMessage("Checking with M-Pesa…");
+    await poll(session.access_token, pendingTxn, 5);
   }
 
   return (
@@ -105,20 +185,49 @@ export default function PremiumPage() {
             <div className="rounded-2xl bg-emerald-50 p-4 text-sm font-semibold text-emerald-700">
               Premium is active. Asante for supporting TriviaPay!
             </div>
+          ) : !isLoggedIn ? (
+            <>
+              <p className="text-sm text-slate-600">
+                Sign in to pay with M-Pesa and unlock Premium on your account.
+              </p>
+              <GradientButton
+                onClick={() => router.push("/login")}
+                gradient={GRADIENT}
+              >
+                Sign in to continue
+              </GradientButton>
+            </>
+          ) : !phone ? (
+            <div className="rounded-2xl bg-amber-50 p-4 text-sm font-semibold text-amber-800">
+              Add your M-Pesa number in{" "}
+              <button
+                type="button"
+                className="underline"
+                onClick={() => router.push("/account")}
+              >
+                Account
+              </button>{" "}
+              before paying.
+            </div>
           ) : (
             <>
-              <input
-                value={phone}
-                onChange={(e) => setPhone(e.target.value)}
-                inputMode="tel"
-                placeholder="M-Pesa / Airtel Money number"
-                className="w-full rounded-2xl border border-slate-300 px-4 py-3 outline-none focus:border-purple-500"
-              />
-              <p className="text-xs font-semibold text-amber-600">
-                We send an M-Pesa prompt for KSh {premiumPrice} to this number.
-              </p>
-              <GradientButton onClick={pay} busy={busy} gradient={GRADIENT}>
-                Prompt — KSh {premiumPrice}
+              <div className="rounded-2xl bg-slate-50 p-3 text-sm text-slate-600">
+                We&apos;ll send an M-Pesa prompt for{" "}
+                <strong>KSh {premiumPrice}</strong> to <strong>{phone}</strong>.
+                Enter your PIN on your phone to confirm.
+              </div>
+              <GradientButton
+                onClick={pendingTxn && phase !== "success" ? checkAgain : pay}
+                busy={busy}
+                gradient={GRADIENT}
+              >
+                {busy
+                  ? phase === "sending"
+                    ? "Sending M-Pesa prompt…"
+                    : "Waiting for M-Pesa…"
+                  : pendingTxn && phase !== "success"
+                    ? "Check status"
+                    : `Pay KSh ${premiumPrice} with M-Pesa`}
               </GradientButton>
             </>
           )}
@@ -131,8 +240,9 @@ export default function PremiumPage() {
         </div>
 
         <p className="mt-4 text-xs text-slate-500">
-          Payments are handled by TriviaPay support for now — the M-Pesa prompt
-          above is a placeholder until the Daraja integration is live.
+          Payments are collected through an M-Pesa STK push (PayWave). You are
+          only charged after you enter your M-Pesa PIN, and Premium activates
+          only once the payment is confirmed.
         </p>
       </main>
     </div>

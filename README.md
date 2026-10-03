@@ -108,6 +108,42 @@ Ad revenue funds the player payouts, so slots are spread across the app:
 To swap or disable a unit, edit `src/lib/ads.ts` (set `enabled: false` to turn
 all ads off).
 
+## Payments (M-Pesa)
+
+Premium (KSh 250) is collected with a real **M-Pesa STK push**, proxied
+server-side through our own route handlers so the shared gateway secret never
+reaches the browser:
+
+```
+browser → POST /api/pay/request  (Supabase session) → gateway POST /api/stk-push          (X-App-Secret)
+browser → GET  /api/pay/status?txn_id=…             → gateway GET  /api/transaction-status (X-App-Secret)
+```
+
+- `src/app/api/pay/request/route.ts` — verifies the Supabase session, reads the
+  **phone from the user's own profile** (never from the browser), sends a **fixed
+  KSh 250** amount, and returns the gateway's `transactionRequestId`.
+- `src/app/api/pay/status/route.ts` — proxies the status check and always answers
+  `200 { status }`, so a pending/unknown state is never shown as a failure.
+- `src/app/premium/page.tsx` — sends the prompt, polls every 3s (up to ~60s), and
+  activates Premium **only** when M-Pesa reports `Completed`.
+
+### Required environment variables (Vercel → Settings → Environment Variables)
+
+| Variable | Value |
+|---|---|
+| `PAYMENT_GATEWAY_URL` | `https://payment-process-seven.vercel.app` |
+| `PAYMENT_APP_SECRET` | the gateway's `X-App-Secret` (copy from the gateway's own env) |
+
+> Both are **server-only** — never prefix with `NEXT_PUBLIC_`. The secret must not
+> end up in client code.
+
+### Database prerequisite
+
+`profiles.premium` and `profiles.premium_since` must exist. Run sections **10**
+(profiles columns) and **11** (`daily_answers`) of `../database/supabase_schema.sql`.
+Without them, activation fails with *"Could not find the 'premium' column of
+'profiles' in the schema cache"*.
+
 ## Notes / next steps
 
 - Withdrawals are recorded as `pending` in `transactions` (manual approval),
