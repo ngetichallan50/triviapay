@@ -1,10 +1,11 @@
 "use client";
 
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { useRouter } from "next/navigation";
 import { AdBanner } from "@/components/AdBanner";
 import { AdNative } from "@/components/AdNative";
 import { AppHeader } from "@/components/AppHeader";
+import { hasOnboarded } from "@/lib/onboarding";
 import { CategoryCard } from "@/components/CategoryCard";
 import { EarnPromptModal } from "@/components/EarnPromptModal";
 import { GradientButton } from "@/components/GradientButton";
@@ -13,13 +14,19 @@ import { useMaterial } from "@/providers/MaterialProvider";
 
 export default function HomePage() {
   const router = useRouter();
-  const { isLoggedIn, profile } = useAuth();
+  const { loading, isLoggedIn, profile } = useAuth();
   const { categories, progressFor, isReady, readyCount, isLoading, retry } =
     useMaterial();
 
   const [selected, setSelected] = useState<string[]>([]);
   const [showEarn, setShowEarn] = useState(false);
   const [starting, setStarting] = useState(false);
+
+  // Brand-new visitors are taken to the welcome / registration step once.
+  useEffect(() => {
+    if (loading) return;
+    if (!isLoggedIn && !hasOnboarded()) router.replace("/register");
+  }, [loading, isLoggedIn, router]);
 
   const readyCategories = useMemo(
     () => categories.filter((c) => isReady(c.id)),

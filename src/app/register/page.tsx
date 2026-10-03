@@ -4,17 +4,22 @@ import { useState } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { GradientButton } from "@/components/GradientButton";
-import { signupBonus } from "@/lib/config";
+import { premiumMinWithdrawal, premiumPrice, signupBonus } from "@/lib/config";
 import {
   isValidPassword,
   isValidUsername,
   normalizeKenyanPhone,
 } from "@/lib/format";
+import { markOnboarded } from "@/lib/onboarding";
 import { useAuth } from "@/providers/AuthProvider";
+
+type Plan = "free" | "premium";
 
 export default function RegisterPage() {
   const router = useRouter();
   const { register } = useAuth();
+  const [step, setStep] = useState<"plan" | "form">("plan");
+  const [plan, setPlan] = useState<Plan>("free");
   const [form, setForm] = useState({
     name: "",
     username: "",
@@ -29,6 +34,11 @@ export default function RegisterPage() {
 
   const set = (key: keyof typeof form) => (e: React.ChangeEvent<HTMLInputElement>) =>
     setForm((prev) => ({ ...prev, [key]: e.target.value }));
+
+  function continueAsGuest() {
+    markOnboarded();
+    router.push("/");
+  }
 
   async function submit(e: React.FormEvent) {
     e.preventDefault();
@@ -60,13 +70,15 @@ export default function RegisterPage() {
         username: form.username.trim(),
         phone,
       });
+      markOnboarded();
       if (needsConfirmation) {
         setNotice(
           "Account created! Check your email to confirm it, then sign in. " +
             "Tip: the project owner can turn email confirmation off in Supabase.",
         );
       } else {
-        router.push("/");
+        // Premium players go straight to payment; free players to the home grid.
+        router.push(plan === "premium" ? "/premium" : "/");
       }
     } catch (err) {
       setError(err instanceof Error ? err.message : "Registration failed.");
@@ -85,10 +97,96 @@ export default function RegisterPage() {
         </p>
       </div>
 
+      {step === "plan" ? (
+        <div className="mx-auto -mt-10 max-w-md space-y-4 rounded-3xl bg-white p-6 card-shadow">
+          <h2 className="text-lg font-extrabold text-slate-900">
+            Choose how you want to play
+          </h2>
+          <p className="text-sm text-slate-500">
+            You can change this later — start free, or go Premium now.
+          </p>
+
+          <button
+            type="button"
+            onClick={() => setPlan("free")}
+            className={`w-full rounded-2xl border-2 p-4 text-left transition ${
+              plan === "free" ? "border-brand bg-emerald-50" : "border-slate-200"
+            }`}
+          >
+            <div className="flex items-center justify-between">
+              <p className="font-extrabold text-slate-900">Free</p>
+              {plan === "free" && <span className="text-brand">✓</span>}
+            </div>
+            <ul className="mt-2 space-y-1 text-xs text-slate-600">
+              <li>💰 Earn KSh 10 per correct answer</li>
+              <li>📅 Up to 70 questions a day</li>
+              <li>🏦 Withdraw from KSh 5,000</li>
+              <li>📣 Ad-supported</li>
+            </ul>
+          </button>
+
+          <button
+            type="button"
+            onClick={() => setPlan("premium")}
+            className={`w-full rounded-2xl border-2 p-4 text-left transition ${
+              plan === "premium"
+                ? "border-purple-500 bg-purple-50"
+                : "border-slate-200"
+            }`}
+          >
+            <div className="flex items-center justify-between">
+              <p className="font-extrabold text-slate-900">Premium</p>
+              <span className="rounded-full bg-purple-600 px-2 py-0.5 text-xs font-bold text-white">
+                KSh {premiumPrice.toFixed(0)}
+              </span>
+            </div>
+            <ul className="mt-2 space-y-1 text-xs text-slate-600">
+              <li>♾️ Unlimited questions — no daily cap</li>
+              <li>🚫 No ads</li>
+              <li>🏦 Withdraw from KSh {premiumMinWithdrawal}</li>
+              <li>🤝 Bigger referral rewards</li>
+            </ul>
+            <p className="mt-2 text-[11px] text-slate-500">
+              Paid once via M-Pesa, right after you create your account.
+            </p>
+          </button>
+
+          <GradientButton onClick={() => setStep("form")}>
+            {plan === "premium"
+              ? "Continue with Premium"
+              : "Continue with Free"}
+          </GradientButton>
+          <button
+            type="button"
+            onClick={continueAsGuest}
+            className="w-full rounded-2xl px-4 py-2 text-sm font-semibold text-slate-500"
+          >
+            Just browsing? Continue as guest
+          </button>
+        </div>
+      ) : (
       <form
         onSubmit={submit}
         className="mx-auto -mt-10 max-w-md space-y-4 rounded-3xl bg-white p-6 card-shadow"
       >
+        <div className="flex items-center justify-between rounded-2xl bg-slate-50 px-4 py-3">
+          <div>
+            <p className="text-xs text-slate-500">Selected plan</p>
+            <p className="font-extrabold text-slate-900">
+              {plan === "premium"
+                ? `Premium — KSh ${premiumPrice.toFixed(0)}`
+                : "Free"}
+            </p>
+          </div>
+          <button
+            type="button"
+            onClick={() => setStep("plan")}
+            className="text-xs font-bold text-brand underline"
+          >
+            Change
+          </button>
+        </div>
+
         <input
           value={form.name}
           onChange={set("name")}
@@ -150,7 +248,7 @@ export default function RegisterPage() {
         )}
 
         <GradientButton type="submit" busy={busy}>
-          Create account
+          {plan === "premium" ? "Create account & continue" : "Create account"}
         </GradientButton>
         <p className="text-center text-sm text-slate-500">
           Already have an account?{" "}
@@ -159,6 +257,7 @@ export default function RegisterPage() {
           </Link>
         </p>
       </form>
+      )}
     </div>
   );
 }

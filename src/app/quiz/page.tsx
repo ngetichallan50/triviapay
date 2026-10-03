@@ -15,6 +15,7 @@ import {
 import {
   calculateEarnings,
   kshPerCorrect,
+  premiumMinWithdrawal,
   questionsPerSection,
   secondsPerQuestion,
 } from "@/lib/config";
@@ -34,6 +35,7 @@ type Phase =
   | "playing"
   | "roundBreak"
   | "reviewPrompt"
+  | "limitReached"
   | "done";
 
 function chunk(items: QuizItem[], size: number): Round[] {
@@ -68,6 +70,7 @@ export default function QuizPage() {
   const [answered, setAnswered] = useState(false);
   const [selectedOption, setSelectedOption] = useState<number | null>(null);
   const [remaining, setRemaining] = useState(secondsPerQuestion);
+  const [hitDailyLimit, setHitDailyLimit] = useState(false);
 
   const scoreRef = useRef(0);
   const roundScoreRef = useRef(0);
@@ -75,6 +78,7 @@ export default function QuizPage() {
   const streakRef = useRef(0);
   const bestStreakRef = useRef(0);
   const passMissRef = useRef<Map<string, QuizItem>>(new Map());
+  const limitShownRef = useRef(false);
 
   const round = rounds[roundIndex];
   const item = round?.items[questionIndex];
@@ -122,6 +126,9 @@ export default function QuizPage() {
         setPhase("empty");
         return;
       }
+
+      // If the daily allowance capped this batch, finishing it exhausts today.
+      setHitDailyLimit(gate && items.length >= allowed);
 
       setRounds(chunk(items, questionsPerSection));
       setTotal(items.length);
@@ -257,6 +264,13 @@ export default function QuizPage() {
     await payoutRound();
 
     if (roundIndex === rounds.length - 1) {
+      // A free player who just used up today's allowance is nudged to Premium
+      // before the round closes out.
+      if (hitDailyLimit && !inReview && !limitShownRef.current) {
+        limitShownRef.current = true;
+        setPhase("limitReached");
+        return;
+      }
       finish();
       return;
     }
@@ -265,7 +279,16 @@ export default function QuizPage() {
     setPhase("roundBreak");
     setAnswered(false);
     setSelectedOption(null);
-  }, [round, questionIndex, roundIndex, rounds.length, payoutRound, finish]);
+  }, [
+    round,
+    questionIndex,
+    roundIndex,
+    rounds.length,
+    payoutRound,
+    finish,
+    hitDailyLimit,
+    inReview,
+  ]);
 
   const continueRound = useCallback(() => {
     roundScoreRef.current = 0;
@@ -428,6 +451,40 @@ export default function QuizPage() {
               className="w-full rounded-2xl px-4 py-2 text-sm font-semibold text-slate-500"
             >
               Skip
+            </button>
+          </div>
+        </div>
+      </div>
+    );
+  }
+
+  if (phase === "limitReached") {
+    return (
+      <div className="flex min-h-screen items-center justify-center bg-slate-900/60 p-5">
+        <div className="w-full max-w-sm rounded-3xl bg-white p-6 text-center shadow-2xl">
+          <div className="text-5xl">⏰</div>
+          <h2 className="mt-2 text-xl font-extrabold text-slate-900">
+            You&apos;ve hit today&apos;s limit
+          </h2>
+          <p className="mt-2 text-sm text-slate-500">
+            You&apos;ve answered all {dailyLimit ?? 70} free questions for today.
+            Come back tomorrow — or go Premium for unlimited questions and
+            withdrawals from KSh {premiumMinWithdrawal}.
+          </p>
+          <div className="mt-5 space-y-2">
+            <GradientButton
+              onClick={() => router.push("/premium")}
+              gradient="linear-gradient(135deg,#6D28D9,#9333EA)"
+              icon={<span>👑</span>}
+            >
+              Go Premium — unlimited
+            </GradientButton>
+            <button
+              type="button"
+              onClick={finish}
+              className="w-full rounded-2xl px-4 py-2 text-sm font-semibold text-slate-500"
+            >
+              See my results
             </button>
           </div>
         </div>

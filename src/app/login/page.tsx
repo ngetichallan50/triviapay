@@ -5,6 +5,7 @@ import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { GradientButton } from "@/components/GradientButton";
 import { isValidPassword } from "@/lib/format";
+import { markOnboarded } from "@/lib/onboarding";
 import { useAuth } from "@/providers/AuthProvider";
 
 export default function LoginPage() {
@@ -29,6 +30,7 @@ export default function LoginPage() {
     setBusy(true);
     try {
       await login(email.trim(), password);
+      markOnboarded();
       router.push("/");
     } catch (err) {
       setError(err instanceof Error ? err.message : "Could not sign in.");
@@ -81,9 +83,16 @@ export default function LoginPage() {
             Create an account
           </Link>
         </p>
-        <p className="text-center text-xs text-slate-400">
-          <Link href="/">Continue as guest</Link>
-        </p>
+        <button
+          type="button"
+          onClick={() => {
+            markOnboarded();
+            router.push("/");
+          }}
+          className="w-full text-center text-xs text-slate-400"
+        >
+          Continue as guest
+        </button>
       </form>
     </div>
   );
