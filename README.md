@@ -117,53 +117,68 @@ all ads off).
 
 ## Payments (M-Pesa)
 
-Premium (KSh 250) is collected with a real **M-Pesa STK push**, proxied
-server-side through our own route handlers so the shared gateway secret never
-reaches the browser:
+Premium (KSh 250) is collected with a real **M-Pesa STK push**, called
+**directly against Paywave Express** from our own route handlers. There is no
+intermediate gateway: the Paywave API key and email stay in server env vars and
+never reach the browser.
 
 ```
-browser → POST /api/pay/request  (Supabase session) → gateway POST /api/stk-push          (X-App-Secret)
-browser → GET  /api/pay/status?txn_id=…             → gateway GET  /api/transaction-status (X-App-Secret)
+browser → POST /api/pay/request   (Supabase session) → Paywave POST /v1/stkpush
+browser → GET  /api/pay/status    (Supabase session) → Paywave POST /v1/tstatus
+browser → POST /api/pay/activate  (Supabase session) → Paywave POST /v1/tstatus → activate Premium (service role)
+Paywave → POST /api/pay/webhook   (configure in the Paywave dashboard)         → activate Premium (service role)
 ```
 
+- `src/lib/paywave.ts` — the Paywave client (`api_key` + `email` in the JSON
+  body). Server-only; only `src/app/api/**` may import it.
 - `src/app/api/pay/request/route.ts` — verifies the Supabase session, reads the
   **phone from the user's own profile** (never from the browser), sends a **fixed
-  KSh 250** amount, and returns the gateway's `transactionRequestId`.
+  KSh 250** amount with reference `TP-<userId>`, and rate-limits one prompt per
+  player per 60s.
 - `src/app/api/pay/status/route.ts` — proxies the status check and always answers
   `200 { status }`, so a pending/unknown state is never shown as a failure.
-- `src/app/api/pay/health/route.ts` — reports whether the gateway accepts our
-  shared secret (no secrets echoed, no STK push sent).
+- `src/app/api/pay/activate/route.ts` — **re-checks with Paywave**, confirms the
+  reference belongs to the caller, then flips `profiles.premium` on using the
+  service-role key. The browser can no longer activate Premium by itself.
+- `src/app/api/pay/webhook/route.ts` — optional Paywave callback. Unsigned, so
+  it is treated as a hint: the transaction is re-verified with `/v1/tstatus`
+  before anything is activated.
+- `src/app/api/pay/health/route.ts` — reports which env vars are present and
+  whether Paywave accepts the credentials. No secrets echoed, no STK push sent.
 - `src/app/premium/page.tsx` — sends the prompt, polls every 3s (up to ~60s), and
-  activates Premium **only** when M-Pesa reports `Completed`.
+  activates Premium **only** when Paywave reports `Completed`.
 
 ### Required environment variables (Vercel → Settings → Environment Variables)
 
 | Variable | Value |
 |---|---|
-| `PAYMENT_GATEWAY_URL` | `https://payment-process-seven.vercel.app` |
-| `PAYMENT_APP_SECRET` | the gateway's `X-App-Secret` (copy from the gateway's own env) |
+| `PAYWAVE_BASE_URL` | `https://paywavexpress.co.ke` |
+| `PAYWAVE_API_KEY` | your linked account's API key (Paywave dashboard → linked account settings) |
+| `PAYWAVE_EMAIL` | the email registered on your Paywave Express account |
+| `PAYWAVE_ACCOUNT_NUMBER` | only for **Paybill** accounts — leave blank for a Till Number |
+| `SUPABASE_SERVICE_ROLE_KEY` | Supabase → Project Settings → API → `service_role` |
 
-> Both are **server-only** — never prefix with `NEXT_PUBLIC_`. The secret must not
-> end up in client code.
+> All five are **server-only** — never prefix with `NEXT_PUBLIC_`.
 
-### Troubleshooting: “Unauthorized” / 401
+### Verifying the wiring
 
-The gateway answers `401 { "error": "Unauthorized" }` when the `X-App-Secret` we
-send doesn't match **its** `APP_SECRET`. So the two values must be identical:
+Visit **`/api/pay/health`** after redeploying. You want:
 
-1. Payment gateway project (`payment-process` on Vercel) → Settings →
-   Environment Variables → **`APP_SECRET`** → reveal and copy.
-2. This project (`triviapay`) → Settings → Environment Variables →
-   **`PAYMENT_APP_SECRET`** → paste the **same** value. No surrounding quotes,
-   no trailing spaces/newline.
-3. **Redeploy** both projects — Vercel bakes env vars in at build time, so a
-   value added after the last deploy is not live.
-4. Verify by visiting **`/api/pay/health`** — it reports
-   `"secretAccepted": true` once the wiring is correct. The secret itself is
-   never returned.
+```json
+{ "ok": true, "credentialsAccepted": true, "supabaseServiceRole": true }
+```
 
-The health check calls the gateway's no-push status endpoint, so it costs
-nothing and never sends an STK prompt.
+- `credentialsAccepted: false` → Paywave rejected `PAYWAVE_API_KEY` / `PAYWAVE_EMAIL`.
+- `supabaseServiceRole: false` → Premium can't be switched on after payment.
+
+The check calls `/v1/tstatus` for a non-existent id, so it costs nothing and
+never sends an STK prompt.
+
+### Paywave dashboard
+
+- **Webhook URL**: `https://www.triviapay.online/api/pay/webhook`
+- Paywave requires an **active subscription** (KES 400/month or 4,000/year) for
+  the API key to work — an inactive account returns `ResultCode 400`.
 
 ### Database prerequisite
 
@@ -172,12 +187,15 @@ nothing and never sends an STK prompt.
 Without them, activation fails with *"Could not find the 'premium' column of
 'profiles' in the schema cache"*.
 
+> Note: `transactions.type` has a `check (type in ('earning','withdrawal'))`
+> constraint, so a successful Premium payment is **not** recorded in
+> `transactions`. Add `'premium'` to that constraint if you want the revenue
+> logged there.
+
 ## Notes / next steps
 
 - Withdrawals are recorded as `pending` in `transactions` (manual approval),
   matching the mobile app. Move the payout itself to a Daraja B2C Edge Function
   before going live.
-- Premium payment is a placeholder (activates immediately) until the M-Pesa
-  Daraja STK push is wired through an Edge Function.
 - Referral rewards exist in the mobile app; porting them to web needs a
   `referrals` table + server-side credit.

@@ -13,6 +13,12 @@
 				"$tsc"
 			],
 			"group": "build"
+		},
+		{
+			"label": "Commit and push web app",
+			"type": "shell",
+			"command": "git add -A && git commit -m \"Direct Paywave integration: drop gateway, server-side activation, webhook\" && git push origin main",
+			"problemMatcher": []
 		}
 	]
 }

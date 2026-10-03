@@ -47,7 +47,6 @@ export default function PremiumPage() {
     isPremium,
     profile,
     session,
-    activatePremium,
     refreshProfile,
     updatePhone,
   } = useAuth();
@@ -90,16 +89,33 @@ export default function PremiumPage() {
     }
   }
 
-  /** Activates Premium once M-Pesa confirms the money moved. */
-  async function activateConfirmed(receipt?: string) {
+  /**
+   * Asks the server to switch Premium on. The server re-checks the payment with
+   * Paywave and owns the write — the browser can't activate itself.
+   */
+  async function activateConfirmed(txnId: string, receipt?: string) {
     setPhase("success");
     setMessage(
       `Payment received${receipt ? ` (receipt ${receipt})` : ""}. Activating Premium…`,
     );
     try {
-      await activatePremium();
+      const res = await fetch("/api/pay/activate", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          Authorization: `Bearer ${session?.access_token ?? ""}`,
+        },
+        body: JSON.stringify({ txn_id: txnId }),
+      });
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok || !data.success) {
+        throw new Error(data.error ?? "Could not activate Premium.");
+      }
       await refreshProfile();
-      setMessage(`Premium activated 👑${receipt ? ` Receipt ${receipt}` : ""}`);
+      const usedReceipt = (data.receipt as string | undefined) ?? receipt;
+      setMessage(
+        `Premium activated 👑${usedReceipt ? ` Receipt ${usedReceipt}` : ""}`,
+      );
     } catch (error) {
       setPhase("failed");
       setMessage(
@@ -110,7 +126,7 @@ export default function PremiumPage() {
     }
   }
 
-  /** Polls the gateway until the payment settles or we run out of attempts. */
+  /** Polls Paywave until the payment settles or we run out of attempts. */
   async function poll(token: string, txnId: string, attempts: number) {
     for (let i = 0; i < attempts; i++) {
       await new Promise((resolve) => setTimeout(resolve, 3000));
@@ -123,7 +139,7 @@ export default function PremiumPage() {
 
       if (status === "Completed") {
         setPendingTxn(null);
-        await activateConfirmed(data.receipt as string | undefined);
+        await activateConfirmed(txnId, data.receipt as string | undefined);
         return;
       }
       if (status === "Failed" || status === "Cancelled") {

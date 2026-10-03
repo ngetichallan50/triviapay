@@ -1,28 +1,44 @@
+import { createClient } from "@supabase/supabase-js";
 import { NextResponse, type NextRequest } from "next/server";
-import { gatewaySecret, gatewayUrl } from "@/lib/paymentGateway";
+import { supabaseAnonKey, supabaseUrl } from "@/lib/config";
+import { checkTransactionStatus, isPaywaveConfigured } from "@/lib/paywave";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 
 /**
- * Proxies a transaction-status check to the payment gateway.
+ * Proxies a transaction-status check to Paywave Express.
  *
- * Always answers 200 with a `status` so the client poll loop keeps working even
- * when the gateway is briefly unreachable — an unknown status must never be
- * treated as a declined payment.
+ * Always answers `200` with a `status` so the client poll loop keeps working
+ * even when Paywave is briefly unreachable — an unknown status must never be
+ * shown to the player as a declined payment.
  */
 export async function GET(req: NextRequest) {
-  if (!gatewaySecret) {
-    return NextResponse.json(
-      { success: false, status: "Pending", error: "Payments aren't configured." },
-      { status: 200 },
-    );
+  if (!isPaywaveConfigured()) {
+    return NextResponse.json({
+      success: false,
+      status: "Pending",
+      error: "Payments aren't configured.",
+    });
   }
 
   const auth = req.headers.get("authorization") ?? "";
-  if (!auth.startsWith("Bearer ")) {
+  const token = auth.startsWith("Bearer ") ? auth.slice(7) : "";
+  if (!token) {
     return NextResponse.json(
       { success: false, status: "Pending", error: "Sign in first." },
+      { status: 401 },
+    );
+  }
+
+  const sb = createClient(supabaseUrl, supabaseAnonKey, {
+    global: { headers: { Authorization: `Bearer ${token}` } },
+    auth: { persistSession: false, autoRefreshToken: false },
+  });
+  const { data: userData } = await sb.auth.getUser(token);
+  if (!userData?.user) {
+    return NextResponse.json(
+      { success: false, status: "Pending", error: "Your session expired." },
       { status: 401 },
     );
   }
@@ -35,28 +51,21 @@ export async function GET(req: NextRequest) {
     );
   }
 
-  try {
-    const res = await fetch(
-      `${gatewayUrl}/api/transaction-status?txn_id=${encodeURIComponent(txnId)}`,
-      {
-        headers: { "X-App-Secret": gatewaySecret },
-        cache: "no-store",
-      },
-    );
-    const body = (await res.json().catch(() => ({}))) as Record<string, unknown>;
-    if (!res.ok) {
-      return NextResponse.json({
-        success: false,
-        status: "Pending",
-        error: (body.error as string) ?? "Status temporarily unavailable.",
-      });
-    }
-    return NextResponse.json({ success: true, ...body });
-  } catch {
+  const result = await checkTransactionStatus(txnId);
+  if (!result.ok) {
     return NextResponse.json({
       success: false,
       status: "Pending",
-      error: "Could not reach the payment service.",
+      error: result.error,
     });
   }
+
+  return NextResponse.json({
+    success: true,
+    status: result.status,
+    receipt: result.receipt,
+    amount: result.amount,
+    phone: result.phone,
+    reference: result.reference,
+  });
 }

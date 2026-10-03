@@ -1,5 +1,10 @@
 import { NextResponse } from "next/server";
-import { gatewaySecret, gatewayUrl } from "@/lib/paymentGateway";
+import {
+  checkTransactionStatus,
+  isPaywaveConfigured,
+  paywaveBaseUrl,
+} from "@/lib/paywave";
+import { isServiceRoleConfigured } from "@/lib/supabaseAdmin";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -7,62 +12,67 @@ export const dynamic = "force-dynamic";
 /**
  * GET /api/pay/health
  *
- * Self-check for the M-Pesa gateway wiring. It calls the gateway's
- * (harmless, no-push) status endpoint with our `X-App-Secret` and reports
- * whether that secret is accepted.
+ * Self-check for the Paywave wiring. Reports which env vars are present and
+ * makes one harmless `/v1/tstatus` call to see whether Paywave accepts the
+ * credentials. **No secret is ever returned, and no STK push is sent.**
  *
- * The secret itself is never returned — only a boolean.
- *
- * Visit https://www.triviapay.online/api/pay/health after setting env vars.
+ * Visit https://www.triviapay.online/api/pay/health
  */
 export async function GET() {
-  if (!gatewaySecret) {
+  const configured = isPaywaveConfigured();
+  const serviceRole = isServiceRoleConfigured();
+
+  const base = {
+    paywave: {
+      configured,
+      baseUrl: paywaveBaseUrl,
+      hasApiKey: Boolean(process.env.PAYWAVE_API_KEY?.trim()),
+      hasEmail: Boolean(process.env.PAYWAVE_EMAIL?.trim()),
+      hasAccountNumber: Boolean(process.env.PAYWAVE_ACCOUNT_NUMBER?.trim()),
+    },
+    supabaseServiceRole: serviceRole,
+  };
+
+  if (!configured) {
     return NextResponse.json(
       {
-        configured: false,
-        secretAccepted: null,
-        gateway: gatewayUrl,
-        hint: "PAYMENT_APP_SECRET is not set on this deployment. Add it in Vercel (Production) and redeploy.",
+        ...base,
+        credentialsAccepted: null,
+        hint: "PAYWAVE_API_KEY and/or PAYWAVE_EMAIL are not set on this deployment. Add them in Vercel (Production) and redeploy.",
       },
       { status: 503 },
     );
   }
 
-  try {
-    const res = await fetch(
-      `${gatewayUrl}/api/transaction-status?txn_id=healthcheck`,
-      {
-        headers: { "X-App-Secret": gatewaySecret },
-        cache: "no-store",
-      },
-    );
-    const body = (await res.json().catch(() => ({}))) as Record<string, unknown>;
+  // A status lookup for a non-existent id costs nothing and sends no prompt.
+  const probe = await checkTransactionStatus("healthcheck");
+  const probeMessage = probe.ok ? null : probe.error;
 
-    // 401 = our secret is wrong. 500 = the gateway has no APP_SECRET at all.
-    // Anything else (400/502 from Paywave) means the secret was accepted.
-    const secretAccepted = res.status !== 401 && res.status !== 500;
+  // Paywave answers 102 / "api_key" when the credentials themselves are bad.
+  const credentialsAccepted = !(
+    !probe.ok && /api_key|api key/i.test(probeMessage ?? "")
+  );
 
-    return NextResponse.json({
-      configured: true,
-      secretAccepted,
-      gateway: gatewayUrl,
-      gatewayStatus: res.status,
-      providerMessage: (body.error as string) ?? null,
-      hint: secretAccepted
-        ? "Secret accepted by the gateway — payments are wired correctly."
-        : res.status === 401
-          ? "The gateway rejected our X-App-Secret. Copy APP_SECRET from the payment gateway's Vercel project into PAYMENT_APP_SECRET here (no quotes, no trailing spaces, same value), then redeploy."
-          : "The gateway has no APP_SECRET set. Add APP_SECRET to the payment gateway project and redeploy it.",
-    });
-  } catch {
-    return NextResponse.json(
-      {
-        configured: true,
-        secretAccepted: null,
-        gateway: gatewayUrl,
-        hint: "Could not reach the gateway from this deployment (network or wrong PAYMENT_GATEWAY_URL).",
-      },
-      { status: 502 },
+  const problems: string[] = [];
+  if (!credentialsAccepted) {
+    problems.push(
+      "Paywave rejected the credentials — check PAYWAVE_API_KEY / PAYWAVE_EMAIL.",
     );
   }
+  if (!serviceRole) {
+    problems.push(
+      "SUPABASE_SERVICE_ROLE_KEY is missing, so Premium can't be activated after payment.",
+    );
+  }
+
+  return NextResponse.json({
+    ...base,
+    credentialsAccepted,
+    probe: probeMessage,
+    ok: credentialsAccepted && serviceRole,
+    hint:
+      problems.length === 0
+        ? "Payment wiring looks good. Remaining step: confirm profiles.premium / profiles.premium_since exist in Supabase."
+        : problems.join(" "),
+  });
 }

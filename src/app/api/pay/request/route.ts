@@ -2,27 +2,37 @@ import { createClient } from "@supabase/supabase-js";
 import { NextResponse, type NextRequest } from "next/server";
 import { premiumPrice, supabaseAnonKey, supabaseUrl } from "@/lib/config";
 import { normalizeKenyanPhone } from "@/lib/format";
-import { gatewaySecret, gatewayUrl } from "@/lib/paymentGateway";
+import {
+  initiateStkPush,
+  isPaywaveConfigured,
+  premiumReference,
+} from "@/lib/paywave";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 
 /**
- * Sends the M-Pesa STK push for the KSh 250 Premium subscription.
+ * Sends the M-Pesa STK push for the Premium subscription **straight to
+ * Paywave Express** — no intermediate gateway.
  *
- * Security: the browser never sees the gateway secret and never chooses the
- * amount or the phone number. We require the caller's Supabase session, look up
- * the phone on their own `profiles` row, and send a fixed server-side amount —
- * so the endpoint can't be abused to spam prompts or pay the wrong amount.
+ * Security: the browser never chooses the amount or the phone number. We require
+ * the caller's Supabase session, read the phone from their own `profiles` row,
+ * and send a fixed server-side amount, so the endpoint can't be abused to spam
+ * prompts at arbitrary numbers.
  */
+
+/** One prompt per player per 60 seconds (in-memory; resets on cold start). */
+const lastPromptAt = new Map<string, number>();
+const PROMPT_COOLDOWN_MS = 60_000;
+
 export async function POST(req: NextRequest) {
-  if (!gatewaySecret) {
+  if (!isPaywaveConfigured()) {
     return NextResponse.json(
       {
         success: false,
         code: "not_configured",
         error:
-          "Payments aren't configured yet. Set PAYMENT_APP_SECRET in the environment.",
+          "Payments aren't configured yet. Set PAYWAVE_API_KEY and PAYWAVE_EMAIL on Vercel.",
       },
       { status: 500 },
     );
@@ -37,6 +47,7 @@ export async function POST(req: NextRequest) {
     );
   }
 
+  // Act as the caller, so RLS lets us read their own profile and nothing else.
   const sb = createClient(supabaseUrl, supabaseAnonKey, {
     global: { headers: { Authorization: `Bearer ${token}` } },
     auth: { persistSession: false, autoRefreshToken: false },
@@ -55,6 +66,20 @@ export async function POST(req: NextRequest) {
     );
   }
 
+  const since = Date.now() - (lastPromptAt.get(user.id) ?? 0);
+  if (since < PROMPT_COOLDOWN_MS) {
+    const retryAfter = Math.ceil((PROMPT_COOLDOWN_MS - since) / 1000);
+    return NextResponse.json(
+      {
+        success: false,
+        code: "rate_limited",
+        error: `An M-Pesa prompt was just sent. Wait ${retryAfter}s before trying again.`,
+        retryAfter,
+      },
+      { status: 429, headers: { "Retry-After": String(retryAfter) } },
+    );
+  }
+
   // Phone comes from the user's own profile — never from the browser.
   const { data: profile } = await sb
     .from("profiles")
@@ -69,109 +94,34 @@ export async function POST(req: NextRequest) {
         success: false,
         code: "no_phone",
         error:
-          "Add a valid M-Pesa number to your account first (Account → phone).",
+          "Add a valid M-Pesa number to your account first (Safaricom 07XX / 01XX or Airtel 073X / 078X).",
       },
       { status: 400 },
     );
   }
-  const msisdn = phone.replace(/^\+/, ""); // gateway wants 2547XXXXXXXX
+  const msisdn = phone.replace(/^\+/, ""); // Paywave wants 2547XXXXXXXX
 
-  const reference = `TP-${user.id.slice(0, 8)}-${Date.now()}`.slice(0, 50);
+  const result = await initiateStkPush({
+    msisdn,
+    amount: premiumPrice,
+    reference: premiumReference(user.id),
+  });
 
-  let res: Response;
-  try {
-    res = await fetch(`${gatewayUrl}/api/stk-push`, {
-      method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-        "X-App-Secret": gatewaySecret,
-      },
-      body: JSON.stringify({
-        phone: msisdn,
-        amount: premiumPrice,
-        reference,
-      }),
-      cache: "no-store",
-    });
-  } catch {
+  if (!result.ok) {
+    const status = result.code === "paywave_1001" ? 429 : 502;
     return NextResponse.json(
-      {
-        success: false,
-        code: "gateway_unreachable",
-        error: "Could not reach the payment service. Please try again.",
-      },
-      { status: 502 },
+      { success: false, code: result.code, error: result.error },
+      { status },
     );
   }
 
-  const body = (await res.json().catch(() => ({}))) as Record<string, unknown>;
-
-  if (!res.ok || body.success === false) {
-    const retryAfter = body.retryAfter as number | undefined;
-    const providerMessage =
-      (body.error as string) ?? (body.message as string) ?? null;
-
-    // The gateway answers 401 when its X-App-Secret doesn't match its own
-    // APP_SECRET — i.e. our env var is missing, stale or mistyped. Say so
-    // instead of passing the bare word "Unauthorized" to the player.
-    if (res.status === 401) {
-      console.error(
-        `[pay/request] gateway rejected X-App-Secret (401) at ${gatewayUrl}`,
-      );
-      return NextResponse.json(
-        {
-          success: false,
-          code: "gateway_unauthorized",
-          error:
-            "Payment service rejected our app secret (401). In Vercel set PAYMENT_APP_SECRET on this project (Production) to the exact APP_SECRET of the payment gateway, then redeploy. Check /api/pay/health to confirm.",
-        },
-        { status: 502 },
-      );
-    }
-
-    if (res.status === 500) {
-      return NextResponse.json(
-        {
-          success: false,
-          code: "gateway_misconfigured",
-          error:
-            "The payment service itself is missing its APP_SECRET (500). Set APP_SECRET on the payment gateway project and redeploy it.",
-        },
-        { status: 502 },
-      );
-    }
-
-    const error = providerMessage ?? "Could not send the M-Pesa prompt.";
-    return NextResponse.json(
-      {
-        success: false,
-        code: res.status === 429 ? "rate_limited" : "provider_rejected",
-        error,
-        retryAfter,
-      },
-      { status: res.status === 429 ? 429 : 502 },
-    );
-  }
-
-  const transactionRequestId = body.transactionRequestId as string | undefined;
-  if (!transactionRequestId) {
-    return NextResponse.json(
-      {
-        success: false,
-        code: "provider_rejected",
-        error: "The payment service did not return a transaction id.",
-      },
-      { status: 502 },
-    );
-  }
+  lastPromptAt.set(user.id, Date.now());
 
   return NextResponse.json({
     success: true,
     amount: premiumPrice,
     phone: msisdn,
-    transactionRequestId,
-    message:
-      (body.message as string) ??
-      "Check your phone for the M-Pesa prompt and enter your PIN.",
+    transactionRequestId: result.transactionRequestId,
+    message: result.message,
   });
 }

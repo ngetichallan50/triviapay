@@ -39,7 +39,6 @@ type AuthContextValue = {
   refreshProfile: () => Promise<void>;
   addEarnings: (amount: number) => Promise<number>;
   requestWithdrawal: (amount: number) => Promise<string>;
-  activatePremium: () => Promise<void>;
   updateName: (name: string) => Promise<void>;
   updatePhone: (phone: string) => Promise<void>;
 };
@@ -188,26 +187,6 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     [profile],
   );
 
-  const activatePremium = useCallback(async () => {
-    if (!profile) return;
-    const { error } = await supabase
-      .from("profiles")
-      .update({ premium: true, premium_since: new Date().toISOString() })
-      .eq("id", profile.id);
-    if (error) {
-      const missingColumn =
-        /column .*(premium|premium_since).*?does not exist|schema cache/i.test(
-          error.message,
-        );
-      throw new Error(
-        missingColumn
-          ? "Premium needs a one-time database setup: run the premium SQL migration in Supabase (adds profiles.premium and profiles.premium_since)."
-          : error.message,
-      );
-    }
-    setProfile({ ...profile, premium: true });
-  }, [profile]);
-
   const updateName = useCallback(
     async (name: string) => {
       if (!profile) return;
@@ -255,7 +234,6 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       refreshProfile,
       addEarnings,
       requestWithdrawal,
-      activatePremium,
       updateName,
       updatePhone,
     };
@@ -269,7 +247,6 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     refreshProfile,
     addEarnings,
     requestWithdrawal,
-    activatePremium,
     updateName,
     updatePhone,
   ]);
