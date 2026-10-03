@@ -131,6 +131,8 @@ browser → GET  /api/pay/status?txn_id=…             → gateway GET  /api/tr
   KSh 250** amount, and returns the gateway's `transactionRequestId`.
 - `src/app/api/pay/status/route.ts` — proxies the status check and always answers
   `200 { status }`, so a pending/unknown state is never shown as a failure.
+- `src/app/api/pay/health/route.ts` — reports whether the gateway accepts our
+  shared secret (no secrets echoed, no STK push sent).
 - `src/app/premium/page.tsx` — sends the prompt, polls every 3s (up to ~60s), and
   activates Premium **only** when M-Pesa reports `Completed`.
 
@@ -143,6 +145,25 @@ browser → GET  /api/pay/status?txn_id=…             → gateway GET  /api/tr
 
 > Both are **server-only** — never prefix with `NEXT_PUBLIC_`. The secret must not
 > end up in client code.
+
+### Troubleshooting: “Unauthorized” / 401
+
+The gateway answers `401 { "error": "Unauthorized" }` when the `X-App-Secret` we
+send doesn't match **its** `APP_SECRET`. So the two values must be identical:
+
+1. Payment gateway project (`payment-process` on Vercel) → Settings →
+   Environment Variables → **`APP_SECRET`** → reveal and copy.
+2. This project (`triviapay`) → Settings → Environment Variables →
+   **`PAYMENT_APP_SECRET`** → paste the **same** value. No surrounding quotes,
+   no trailing spaces/newline.
+3. **Redeploy** both projects — Vercel bakes env vars in at build time, so a
+   value added after the last deploy is not live.
+4. Verify by visiting **`/api/pay/health`** — it reports
+   `"secretAccepted": true` once the wiring is correct. The secret itself is
+   never returned.
+
+The health check calls the gateway's no-push status endpoint, so it costs
+nothing and never sends an STK prompt.
 
 ### Database prerequisite
 

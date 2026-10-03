@@ -108,10 +108,40 @@ export async function POST(req: NextRequest) {
 
   if (!res.ok || body.success === false) {
     const retryAfter = body.retryAfter as number | undefined;
-    const error =
-      (body.error as string) ??
-      (body.message as string) ??
-      "Could not send the M-Pesa prompt.";
+    const providerMessage =
+      (body.error as string) ?? (body.message as string) ?? null;
+
+    // The gateway answers 401 when its X-App-Secret doesn't match its own
+    // APP_SECRET — i.e. our env var is missing, stale or mistyped. Say so
+    // instead of passing the bare word "Unauthorized" to the player.
+    if (res.status === 401) {
+      console.error(
+        `[pay/request] gateway rejected X-App-Secret (401) at ${gatewayUrl}`,
+      );
+      return NextResponse.json(
+        {
+          success: false,
+          code: "gateway_unauthorized",
+          error:
+            "Payment service rejected our app secret (401). In Vercel set PAYMENT_APP_SECRET on this project (Production) to the exact APP_SECRET of the payment gateway, then redeploy. Check /api/pay/health to confirm.",
+        },
+        { status: 502 },
+      );
+    }
+
+    if (res.status === 500) {
+      return NextResponse.json(
+        {
+          success: false,
+          code: "gateway_misconfigured",
+          error:
+            "The payment service itself is missing its APP_SECRET (500). Set APP_SECRET on the payment gateway project and redeploy it.",
+        },
+        { status: 502 },
+      );
+    }
+
+    const error = providerMessage ?? "Could not send the M-Pesa prompt.";
     return NextResponse.json(
       {
         success: false,
